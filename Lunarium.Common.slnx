@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Lunarium.Common/Lunarium.Common.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Lunarium.Common.Tests/Lunarium.Common.Tests.csproj" />
+  </Folder>
+</Solution>
