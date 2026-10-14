@@ -8,6 +8,26 @@
     <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
+  <!-- ===== NuGet Info ===== -->
+  <PropertyGroup>
+    <Version>1.0.0</Version>
+    <Authors>Cyanflower</Authors>
+    <Description>A zero-dependency .NET common library: character-set constants, NanoID and lock-free snowflake ID generation, dirty/CTS-based debouncers, and a debounced JSON file-backed key-value cache store. Native AOT compatible.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Cyanflower/Lunarium.Common</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Cyanflower/Lunarium.Common.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageId>Lunarium.Common</PackageId>
+    <PackageTags>lunarium;utilities;alphabet;nanoid;snowflake;id-generator;debounce;cache;aot;dotnet</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Copyright>Copyright (c) Cyanflower 2026</Copyright>
+  </PropertyGroup>
+
+  <!-- README 位于仓库根，故用相对路径打包到包根 -->
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
   <!-- 仅对测试程序集开放 internal 类型(JsonFileHandler / SafeOnError / CacheJsonContext 等) -->
   <ItemGroup>
     <InternalsVisibleTo Include="Lunarium.Common.Tests" />
