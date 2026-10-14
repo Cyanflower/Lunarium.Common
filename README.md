@@ -4,8 +4,10 @@ Lunarium 项目的公共类库（shared class library），用于存放跨项目
 
 ## 环境要求
 
-- .NET SDK 10.0 或更高版本
-- 目标框架：`net10.0`
+- .NET SDK 10.0 或更高版本（可同时构建 net8.0 / net9.0 目标）
+- 目标框架：`net8.0`、`net9.0`、`net10.0`（多目标）
+  - .NET 9 及以上使用 `System.Threading.Lock`，.NET 8 自动退回 `object` 加锁（条件编译）
+  - 运行单元测试需本机具备对应运行时（测试项目自身仅 `net10.0`）
 
 ## 项目结构
 
@@ -66,7 +68,7 @@ dotnet build
 # 只构建单个项目
 dotnet build src/Lunarium.Common/Lunarium.Common.csproj
 
-# 打包为 NuGet 包
+# 打包(同时产出 .nupkg 与 .snupkg 符号包)
 dotnet pack -c Release
 ```
 

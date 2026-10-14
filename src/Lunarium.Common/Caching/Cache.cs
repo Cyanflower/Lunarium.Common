@@ -3,6 +3,14 @@ using System.Text.Json.Serialization;
 
 namespace Lunarium.Common.Caching;
 
+/// <summary>
+/// 强类型标量键值缓存容器：把值按类型分入 5 个并发字典桶，并用一个不参与序列化的私有索引
+/// 保证「一个键只落在一个桶」.
+/// </summary>
+/// <remarks>
+/// 桶属性为公开可写（便于 JSON 反序列化），但绕过 <see cref="Set{T}"/> 直接写入桶后，
+/// 必须调用 <see cref="RebuildIndex"/> 重建索引，否则 <see cref="Get{T}"/> / <see cref="Remove"/> 无法定位该键。
+/// </remarks>
 public class Cache
 {
     /// <summary>标量值所属的存储桶。</summary>
@@ -23,12 +31,32 @@ public class Cache
     // 保护 Set/Remove 的多步改动(ConcurrentDictionary 只保证单步原子, 索引与桶需要保持一致)。
     private readonly object _gate = new();
 
+    /// <summary>字符串桶：键 → <see cref="string"/> 值。</summary>
     public ConcurrentDictionary<string, string> Strings { get; set; } = new();
+
+    /// <summary>有符号整数桶：键 → <see cref="long"/> 值（<see cref="int"/>、<see cref="short"/> 也归入此桶）。</summary>
     public ConcurrentDictionary<string, long> Numbers { get; set; } = new();
+
+    /// <summary>无符号整数桶：键 → <see cref="ulong"/> 值（<see cref="uint"/> 也归入此桶）。</summary>
     public ConcurrentDictionary<string, ulong> UnsignedNumbers { get; set; } = new();
+
+    /// <summary>浮点桶：键 → <see cref="double"/> 值（<see cref="float"/> 也归入此桶）。</summary>
     public ConcurrentDictionary<string, double> FloatingNumbers { get; set; } = new();
+
+    /// <summary>布尔桶：键 → <see cref="bool"/> 值。</summary>
     public ConcurrentDictionary<string, bool> Booleans { get; set; } = new();
 
+    /// <summary>
+    /// 写入或更新一个键值。若该键原先落在别的桶（值类型变了），会先清除旧桶中的同名项，
+    /// 保证一个键不会同时存在于多个桶。
+    /// </summary>
+    /// <typeparam name="T">
+    /// 值类型，仅支持：<see cref="string"/>、<see cref="int"/>、<see cref="long"/>、<see cref="short"/>、
+    /// <see cref="uint"/>、<see cref="ulong"/>、<see cref="double"/>、<see cref="float"/>、<see cref="bool"/>。
+    /// </typeparam>
+    /// <param name="key">键名。</param>
+    /// <param name="value">要写入的值。</param>
+    /// <exception cref="NotSupportedException"><paramref name="value"/> 的类型不在上述支持列表内时抛出。</exception>
     public void Set<T>(string key, T value)
     {
         lock (_gate)
@@ -44,6 +72,13 @@ public class Cache
         }
     }
 
+    /// <summary>
+    /// 读取指定键的强类型值。
+    /// </summary>
+    /// <typeparam name="T">期望的目标类型；需与写入时归入的桶一致，否则视为未命中。</typeparam>
+    /// <param name="key">键名。</param>
+    /// <param name="defaultValue">未命中或类型不匹配时的回退值。</param>
+    /// <returns>命中则返回缓存值，否则返回 <paramref name="defaultValue"/>。</returns>
     public T? Get<T>(string key, T? defaultValue = default)
     {
         // 未登记, 或请求类型与所存桶不符 → 直接返回默认值(无需逐桶探测)

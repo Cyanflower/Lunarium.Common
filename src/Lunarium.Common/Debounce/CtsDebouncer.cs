@@ -1,5 +1,13 @@
 namespace Lunarium.Common.Debounce;
 
+/// <summary>
+/// 基于取消令牌（CTS）的尾沿防抖器：连续调用 <see cref="Invoke"/> 只会触发一次 action，
+/// 且发生在「最后一次调用 + <c>delay</c>」之后；可用 <see cref="Options.MaxWait"/> 限制最长等待，避免持续调用导致饥饿。
+/// </summary>
+/// <remarks>
+/// action 串行执行（同一时刻最多一个），且与 <see cref="ExecuteNowAsync"/> 排队互斥；
+/// action 收到的取消令牌始终是调用方提供的外部令牌，本类型<b>不会</b>取消它。
+/// </remarks>
 public sealed class CtsDebouncer : IDisposable, IAsyncDisposable
 {
     // action 收到的 CancellationToken 为「外部令牌」(由 options.ActionCancellationToken 提供),
@@ -8,7 +16,12 @@ public sealed class CtsDebouncer : IDisposable, IAsyncDisposable
     private readonly TimeSpan _delay;
     private readonly TimeSpan? _maxWait;
     private readonly CancellationToken _externalToken;
+#if NET9_0_OR_GREATER
     private readonly Lock _lock = new();
+#else
+    // System.Threading.Lock 自 .NET 9 引入; 低版本退回 object(由 Monitor 提供等价互斥语义)
+    private readonly object _lock = new();
+#endif
 
     // 内部防抖 CTS: 链接外部令牌(单向), 仅用于 Task.Delay.
     private CancellationTokenSource? _cts;
@@ -56,6 +69,14 @@ public sealed class CtsDebouncer : IDisposable, IAsyncDisposable
         public bool SafeOnError { get; init; } = true;
     }
 
+    /// <summary>
+    /// 初始化 <see cref="CtsDebouncer"/> 的新实例；构造后即可调用 <see cref="Invoke"/>。
+    /// </summary>
+    /// <param name="action">待防抖执行的异步操作，接收调用方提供的外部取消令牌。</param>
+    /// <param name="delay">尾沿防抖延迟，必须大于 <see cref="TimeSpan.Zero"/>。</param>
+    /// <param name="options">配置项，见 <see cref="Options"/>。</param>
+    /// <exception cref="ArgumentNullException"><paramref name="action"/> 或 <paramref name="options"/> 为 <c>null</c>。</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="delay"/> 或 <see cref="Options.MaxWait"/> 不为正数。</exception>
     public CtsDebouncer(Func<CancellationToken, Task> action, TimeSpan delay, Options options)
     {
         ArgumentNullException.ThrowIfNull(action);
@@ -74,6 +95,10 @@ public sealed class CtsDebouncer : IDisposable, IAsyncDisposable
         _safeOnError = options.SafeOnError;
     }
 
+    /// <summary>
+    /// 触发一次（防抖的）调用：取消尚未触发的上一次延迟，并在 <c>delay</c> 之后执行一次 action。
+    /// </summary>
+    /// <exception cref="ObjectDisposedException">实例已被 <see cref="Dispose"/> / <see cref="DisposeAsync"/> 释放。</exception>
     public void Invoke()
     {
         lock (_lock)

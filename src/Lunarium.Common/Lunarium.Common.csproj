@@ -2,10 +2,24 @@
 
   <PropertyGroup>
     <OutputType>Library</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsAotCompatible>true</IsAotCompatible>
+    <!-- 向消费者交付 XML 文档(IntelliSense); 缺失的公开注释会以 CS1591 提醒, 需保持为 0 告警 -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!-- ===== SourceLink / 符号包 ===== -->
+  <PropertyGroup>
+    <!-- 让调试器能从 PDB 跳转到 GitHub 上对应 commit 的源码(本仓库为公开仓库, 无需额外凭据) -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <!-- 确定性构建(源码路径规范化为 /_/)只在 CI 开启: 本地开启会破坏本地调试体验 -->
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <!-- PDB 走符号服务器而非打进 .nupkg -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
   <!-- ===== NuGet Info ===== -->

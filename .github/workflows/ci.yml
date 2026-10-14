@@ -39,3 +39,7 @@ jobs:
       # 因此这一步同时充当 AOT/裁剪兼容性的回归防线。
       - name: Test
         run: dotnet test --configuration Release --no-build
+
+      # 把打包也纳入 CI：否则包元数据/README 打包要到发版时才第一次被验证
+      - name: Pack (verify packaging)
+        run: dotnet pack src/Lunarium.Common/Lunarium.Common.csproj --configuration Release --no-build --output ./nupkgs

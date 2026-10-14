@@ -1,5 +1,13 @@
 namespace Lunarium.Common.Debounce;
 
+/// <summary>
+/// 脏状态防抖器：按固定周期轮询「脏」标记，有脏数据时执行一次 action 并清除标记；
+/// 执行失败则重新置脏，等待下一轮重试。
+/// </summary>
+/// <remarks>
+/// 构造即启动轮询循环；取消生命周期令牌（<see cref="Options.DebouncerCancellationToken"/>）或调用
+/// <see cref="DisposeAsync"/> 会结束循环，并在退出前把残留的脏数据最后提交一次。
+/// </remarks>
 public sealed class DirtyDebouncer : IDisposable, IAsyncDisposable
 {
     private readonly Func<CancellationToken, Task> _action;
@@ -52,6 +60,14 @@ public sealed class DirtyDebouncer : IDisposable, IAsyncDisposable
         public bool SafeOnError { get; init; } = true;
     }
 
+    /// <summary>
+    /// 初始化 <see cref="DirtyDebouncer"/> 的新实例，并立即启动轮询循环。
+    /// </summary>
+    /// <param name="action">待防抖执行的异步操作，接收调用方提供的外部取消令牌。</param>
+    /// <param name="interval">检查并合并脏数据的轮询周期，必须大于 <see cref="TimeSpan.Zero"/>。</param>
+    /// <param name="options">配置项，见 <see cref="Options"/>。</param>
+    /// <exception cref="ArgumentNullException"><paramref name="action"/> 或 <paramref name="options"/> 为 <c>null</c>。</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="interval"/> 不为正数。</exception>
     public DirtyDebouncer(Func<CancellationToken, Task> action, TimeSpan interval, Options options)
     {
         ArgumentNullException.ThrowIfNull(action);
