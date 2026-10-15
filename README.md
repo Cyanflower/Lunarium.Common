@@ -16,6 +16,8 @@ Lunarium.Common/
 ├── src/Lunarium.Common/        # 目录名 = 程序集名；tests/ 与之并列
 │   ├── Lunarium.Common.csproj  # 类库项目文件（默认 glob 包含本目录下全部 .cs）
 │   ├── Alphabet.cs             # Lunarium.Common
+│   ├── EnvVar.cs               # Lunarium.Common
+│   ├── Net/                    # Lunarium.Common.Net
 │   ├── UID/                    # Lunarium.Common.UID
 │   ├── Debounce/               # Lunarium.Common.Debounce
 │   └── Caching/                # Lunarium.Common.Caching（含 CacheJsonContext 源生成上下文）
@@ -31,12 +33,52 @@ Lunarium.Common/
 | 模块 | 命名空间 | 说明 |
 | --- | --- | --- |
 | `Alphabet` | `Lunarium.Common` | 常用字符集常量（Base16/32/36/62、防混淆、密码字符集等） |
+| `EnvVar` | `Lunarium.Common` | 环境变量包装：读取 / 写入 / 删除 + 类型化解析（`As<T>`、`AsEnum`、宽松布尔字面量） |
+| `Net` | `Lunarium.Common.Net` | 代理配置 `ProxyUrl`：从环境变量获取并转换为 `IWebProxy` / `Uri` |
 | `UID` | `Lunarium.Common.UID` | `NanoID` 无取模偏差 ID 生成、`LocalSnowflake` 无锁单机雪花 ID |
 | `Debounce` | `Lunarium.Common.Debounce` | 脏状态防抖 `DirtyDebouncer` 与取消令牌防抖 `CtsDebouncer` |
 | `Caching` | `Lunarium.Common.Caching` | 并发内存 KV + 防抖异步落盘的强类型缓存存储（`CacheStore`） |
 
 所有模块均为同一程序集内的并列工具集，零外部 NuGet 依赖（仅使用 BCL）。**不拆分独立项目**——
 仅当某模块需引入其他模块无法接受的重依赖、或需独立发版时才考虑拆分。
+
+### 环境变量读取（`EnvVar`）
+
+```csharp
+// 读取：未设置或值为空白时返回 null；必须存在时用 GetRequired（否则抛异常）
+string? port = EnvVar.Get("PORT")?.Value;
+
+// 候选名按优先级依次尝试，第一个命中的生效
+EnvVar? proxy = EnvVar.GetAny("http_proxy", "HTTP_PROXY");
+
+// 写入 / 删除：名称与值都会被裁剪首尾空白
+EnvVar.Set("MODE", "production");
+EnvVar.Unset("MODE");
+
+// 类型化解析：泛型走 IParsable<T>（固定不变文化），失败返回默认值 / 抛异常
+int timeout = EnvVar.GetRequired("TIMEOUT").As(30);
+DayOfWeek day = EnvVar.GetRequired("DAY").AsEnum(DayOfWeek.Monday);
+```
+
+语义要点（与 BCL 的 `Environment.GetEnvironmentVariable` 不同之处）：
+
+- `Name` / `Value` 在构造时即裁剪首尾空白；`Set` 也按裁剪后的名称与值写入。
+- **"未设置"与"值为空白"无法区分**：两者都当作未设置（`Get` 返回 `null`，`GetRequired` 抛异常）。
+- `Set` 与构造函数**拒绝空白值**，因此写不出空字符串变量；要清空变量只能用 `Unset`（彻底删除）。
+- `ToString()` 只返回变量名、**不返回值**，避免日志或异常信息泄露密钥（取值请用 `Value`）；
+  同时刻意**不提供** `implicit operator string`——否则 `"" + envVar` 这类写法会绕过脱敏取得值。
+- `As<bool>()` / `RequiredAs<bool>()` 使用宽松字面量（`true/false`、`1/yes/on`、`0/no/off`，大小写不敏感），
+  而 `IParsable<bool>` 本身只认 `true/false`；需要自定义字面量时用 `AsBoolean("enabled", "disabled")`。
+- 枚举不实现 `IParsable<T>`，请用 `AsEnum` / `RequiredAsEnum`；后者默认 `requireDefined: true`，
+  会拒绝 `"99"` 这类能解析但未定义的纯数字值。
+
+代理可直接从环境变量构造（默认依次读取 `http_proxy` → `HTTP_PROXY`，小写优先，值同样会裁剪）：
+
+```csharp
+ProxyUrl? proxy = ProxyUrl.FromEnvironment();   // 也可指定变量名：FromEnvironment("MY_PROXY")
+IWebProxy webProxy = proxy.ToWebProxy();
+Uri uri = proxy.ToUri();
+```
 
 ### 缓存落盘位置
 
