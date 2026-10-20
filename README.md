@@ -35,7 +35,7 @@ Lunarium.Common/
 | `Alphabet` | `Lunarium.Common` | 常用字符集常量（Base16/32/36/62、防混淆、密码字符集等） |
 | `EnvVar` | `Lunarium.Common` | 环境变量包装：读取 / 写入 / 删除 + 类型化解析（`As<T>`、`AsEnum`、宽松布尔字面量） |
 | `Net` | `Lunarium.Common.Net` | 代理配置 `ProxyUrl`：从环境变量获取并转换为 `IWebProxy` / `Uri` |
-| `UID` | `Lunarium.Common.UID` | `NanoID` 无取模偏差 ID 生成、`LocalSnowflake` 无锁单机雪花 ID |
+| `UID` | `Lunarium.Common.UID` | `NanoID` 无取模偏差 ID 生成（可直接输出 UTF-8 字节）、`LocalSnowflake` 无锁单机雪花 ID |
 | `Debounce` | `Lunarium.Common.Debounce` | 脏状态防抖 `DirtyDebouncer` 与取消令牌防抖 `CtsDebouncer` |
 | `Caching` | `Lunarium.Common.Caching` | 并发内存 KV + 防抖异步落盘的强类型缓存存储（`CacheStore`） |
 

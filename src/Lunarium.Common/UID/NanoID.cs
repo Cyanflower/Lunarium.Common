@@ -1,6 +1,7 @@
 using System;
 using System.Numerics;
 using System.Security.Cryptography;
+using System.Text;
 
 namespace Lunarium.Common.UID;
 
@@ -26,15 +27,7 @@ public static class NanoId
     /// <exception cref="ArgumentException"><paramref name="alphabet"/> 为空字符串。</exception>
     public static string Generate(int size = DefaultSize, string alphabet = Alphabet.UrlSafe)
     {
-        // 长度不能为负或为0
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(size);
-        // 字符集不能是空的
-        ArgumentException.ThrowIfNullOrEmpty(alphabet);
-
-        if (alphabet.Length > 256)
-        {
-            throw new ArgumentOutOfRangeException(nameof(alphabet), "Alphabet 长度不能超过 256 个字符。");
-        }
+        ValidateArguments(size, alphabet);
 
         // 如果字符集长度刚好是 2 的幂(64, 32, 16), 可以使用快速位掩码路径
         if (BitOperations.IsPow2(alphabet.Length))
@@ -44,6 +37,53 @@ public static class NanoId
 
         // 通用无偏算法(消除 Modulo Bias)
         return GenerateUnbiased(size, alphabet);
+    }
+
+    /// <summary>
+    /// 生成一个随机 NanoId, 并直接返回 UTF-8 字节序列。
+    /// </summary>
+    /// <remarks>
+    /// 结果与 <c>Encoding.UTF8.GetBytes(Generate(size, alphabet))</c> 相同, 但省去中间字符串分配与转码,
+    /// 适合把 ID 直接写入 JSON / 网络缓冲区 / 哈希计算的场景。由于要求每个字符只占 1 字节,
+    /// <paramref name="alphabet"/> 必须仅包含 ASCII 字符; 非 ASCII 字符集请使用
+    /// <see cref="Generate(int, string)"/> 再自行编码。
+    /// </remarks>
+    /// <param name="size">生成的 Id 长度, 必须大于 0; 默认 21</param>
+    /// <param name="alphabet">自定义字符集, 长度需为 1~256 且仅包含 ASCII 字符; 默认 <see cref="Alphabet.UrlSafe"/></param>
+    /// <returns>长度为 <paramref name="size"/> 的 UTF-8 字节数组</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="size"/> 小于等于 0, 或 <paramref name="alphabet"/> 长度超过 256</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="alphabet"/> 为 <see langword="null"/>。</exception>
+    /// <exception cref="ArgumentException"><paramref name="alphabet"/> 为空, 或包含非 ASCII 字符。</exception>
+    public static byte[] GenerateUtf8(int size = DefaultSize, string alphabet = Alphabet.UrlSafe)
+    {
+        ValidateArguments(size, alphabet);
+        ValidateAsciiAlphabet(alphabet);
+
+        byte[] result = new byte[size];
+        FillUtf8(result, alphabet);
+        return result;
+    }
+
+    /// <summary>
+    /// 生成一个随机 NanoId, 并直接写入调用方提供的 UTF-8 缓冲区 (全程零分配)。
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="destination"/> 的长度即 Id 的长度; 写入的字节与
+    /// <see cref="GenerateUtf8(int, string)"/> 相同 (仅含 ASCII 字符集时每字符 1 字节)。
+    /// 适合配合 <c>stackalloc</c> 或 <c>ArrayPool&lt;byte&gt;</c> 复用缓冲区, 做到生成过程零分配。
+    /// </remarks>
+    /// <param name="destination">目标缓冲区, 长度即 Id 长度, 必须大于 0</param>
+    /// <param name="alphabet">自定义字符集, 长度需为 1~256 且仅包含 ASCII 字符; 默认 <see cref="Alphabet.UrlSafe"/></param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="destination"/> 为空, 或 <paramref name="alphabet"/> 长度超过 256</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="alphabet"/> 为 <see langword="null"/>。</exception>
+    /// <exception cref="ArgumentException"><paramref name="alphabet"/> 为空, 或包含非 ASCII 字符。</exception>
+    public static void GenerateUtf8(Span<byte> destination, string alphabet = Alphabet.UrlSafe)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(destination.Length);
+        ValidateAlphabet(alphabet);
+        ValidateAsciiAlphabet(alphabet);
+
+        FillUtf8(destination, alphabet);
     }
 
     /// <summary>
@@ -160,5 +200,100 @@ public static class NanoId
                 // 将通过while循环重新进行一次随机数数组生成, 并继续采样并填充剩余部分
             }
         });
+    }
+
+    /// <summary>
+    /// 校验长度与字符集的公共参数约束。
+    /// </summary>
+    private static void ValidateArguments(int size, string alphabet)
+    {
+        // 长度不能为负或为0
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(size);
+        ValidateAlphabet(alphabet);
+    }
+
+    /// <summary>
+    /// 校验字符集非空且长度不超过 256。
+    /// </summary>
+    private static void ValidateAlphabet(string alphabet)
+    {
+        // 字符集不能是空的
+        ArgumentException.ThrowIfNullOrEmpty(alphabet);
+
+        if (alphabet.Length > 256)
+        {
+            throw new ArgumentOutOfRangeException(nameof(alphabet), "Alphabet 长度不能超过 256 个字符。");
+        }
+    }
+
+    /// <summary>
+    /// UTF-8 字节输出要求每个字符恰好编码为 1 字节, 因此字符集必须全部是 ASCII。
+    /// </summary>
+    private static void ValidateAsciiAlphabet(string alphabet)
+    {
+        if (!Ascii.IsValid(alphabet))
+        {
+            throw new ArgumentException("UTF-8 字节输出要求字符集仅包含 ASCII 字符。", nameof(alphabet));
+        }
+    }
+
+    /// <summary>
+    /// 将随机 NanoID 直接以 UTF-8 字节写入目标缓冲区 (零分配)。
+    /// </summary>
+    private static void FillUtf8(Span<byte> destination, string alphabet)
+    {
+        if (BitOperations.IsPow2(alphabet.Length))
+        {
+            FillUtf8FastPow2(destination, alphabet);
+        }
+        else
+        {
+            FillUtf8Unbiased(destination, alphabet);
+        }
+    }
+
+    /// <summary>
+    /// UTF-8 快速路径: 字符集长度为 2 的幂, 直接在目标缓冲区上就地随机填充并掩码映射。
+    /// </summary>
+    private static void FillUtf8FastPow2(Span<byte> destination, string alphabet)
+    {
+        int mask = alphabet.Length - 1;
+
+        // 直接把随机字节写进目标缓冲区, 省掉独立的随机数缓冲区
+        RandomNumberGenerator.Fill(destination);
+
+        for (int i = 0; i < destination.Length; i++)
+        {
+            destination[i] = (byte)alphabet[destination[i] & mask];
+        }
+    }
+
+    /// <summary>
+    /// UTF-8 通用路径: 拒绝采样消除取模偏差, 通过原地压缩避免额外的随机数缓冲区。
+    /// </summary>
+    private static void FillUtf8Unbiased(Span<byte> destination, string alphabet)
+    {
+        int mask = (int)BitOperations.RoundUpToPowerOf2((uint)alphabet.Length) - 1;
+        int written = 0;
+
+        while (written < destination.Length)
+        {
+            // 只对尚未填充的尾部生成随机字节; 已写出的前缀不会再被触碰
+            Span<byte> tail = destination[written..];
+            RandomNumberGenerator.Fill(tail);
+
+            int accepted = 0;
+            for (int i = 0; i < tail.Length; i++)
+            {
+                int alphabetIndex = tail[i] & mask;
+                if (alphabetIndex < alphabet.Length)
+                {
+                    // accepted <= i, 因此写回不会覆盖尚未读取的随机字节
+                    tail[accepted++] = (byte)alphabet[alphabetIndex];
+                }
+            }
+
+            written += accepted;
+        }
     }
 }

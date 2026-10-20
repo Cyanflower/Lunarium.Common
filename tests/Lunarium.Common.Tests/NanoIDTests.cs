@@ -1,3 +1,4 @@
+using System.Text;
 using Lunarium.Common.UID;
 
 namespace Lunarium.Common.Tests;
@@ -96,6 +97,140 @@ public class NanoIDTests
 
         for (int i = 0; i < samples; i++)
             counts[alphabet.IndexOf(NanoId.Generate(1, alphabet)[0])]++;
+
+        for (int i = 0; i < counts.Length; i++)
+            Assert.True(counts[i] > 0, $"字符 '{alphabet[i]}' 在 {samples} 次采样中从未出现");
+
+        double expected = (double)samples / alphabet.Length;
+        double chiSquare = counts.Sum(c => (c - expected) * (c - expected) / expected);
+        double threshold = (alphabet.Length - 1) + 6 * Math.Sqrt(2.0 * (alphabet.Length - 1));
+
+        Assert.True(chiSquare < threshold, $"{fieldName} 卡方值 {chiSquare:F1} 超过阈值 {threshold:F1}，疑似存在取模偏差");
+    }
+
+    // ====== GenerateUtf8 ======
+
+    [Fact]
+    public void GenerateUtf8_Default_Returns21UrlSafeBytes()
+    {
+        for (int i = 0; i < 200; i++)
+        {
+            byte[] bytes = NanoId.GenerateUtf8();
+            Assert.Equal(21, bytes.Length);
+
+            string id = Encoding.UTF8.GetString(bytes);
+            Assert.Equal(21, id.Length);
+            foreach (char c in id)
+                Assert.True(Alphabet.UrlSafe.Contains(c), $"ID 含字符集之外的字符 '{c}': {id}");
+        }
+    }
+
+    [Theory]
+    [InlineData(nameof(Alphabet.Base64))]   // 64: 2 的幂 → 位掩码快路径
+    [InlineData(nameof(Alphabet.Base32))]   // 32: 2 的幂 → 位掩码快路径
+    [InlineData(nameof(Alphabet.Base))]     // 62: 非 2 的幂 → 拒绝采样路径
+    [InlineData(nameof(Alphabet.Base58))]   // 58: 非 2 的幂 → 拒绝采样路径
+    [InlineData(nameof(Alphabet.Digits))]   // 10: 非 2 的幂 → 拒绝采样路径
+    public void GenerateUtf8_OnlyUsesCharactersFromAlphabet(string fieldName)
+    {
+        string alphabet = GetAlphabet(fieldName);
+        for (int i = 0; i < 200; i++)
+        {
+            string id = Encoding.UTF8.GetString(NanoId.GenerateUtf8(32, alphabet));
+            Assert.Equal(32, id.Length);
+            foreach (char c in id)
+                Assert.True(alphabet.Contains(c), $"字符 '{c}' 不在 {fieldName} 中");
+        }
+    }
+
+    [Fact]
+    public void GenerateUtf8_SingleCharacterAlphabet_AlwaysReturnsThatByte()
+    {
+        byte[] bytes = NanoId.GenerateUtf8(5, "x");
+        Assert.All(bytes, b => Assert.Equal((byte)'x', b));
+    }
+
+    [Fact]
+    public void GenerateUtf8_SpanOverload_FillsOnlyDestination()
+    {
+        const int size = 16;
+        byte[] buffer = new byte[size + 8];
+        buffer.AsSpan().Fill(0xFF);
+
+        NanoId.GenerateUtf8(buffer.AsSpan(0, size));
+
+        foreach (byte b in buffer.AsSpan(0, size))
+            Assert.True(Alphabet.UrlSafe.Contains((char)b), $"字节 {b} 不在字符集中");
+
+        Assert.All(buffer.AsSpan(size).ToArray(), b => Assert.Equal(0xFF, b));
+    }
+
+    [Fact]
+    public void GenerateUtf8_SpanOverload_SingleCharacterAlphabet()
+    {
+        byte[] buffer = new byte[5];
+        NanoId.GenerateUtf8(buffer, "x");
+        Assert.All(buffer, b => Assert.Equal((byte)'x', b));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(int.MinValue)]
+    public void GenerateUtf8_NonPositiveSize_Throws(int size)
+        => Assert.Throws<ArgumentOutOfRangeException>(() => NanoId.GenerateUtf8(size));
+
+    [Fact]
+    public void GenerateUtf8_EmptyDestination_Throws()
+        => Assert.Throws<ArgumentOutOfRangeException>(() => NanoId.GenerateUtf8(Span<byte>.Empty));
+
+    [Fact]
+    public void GenerateUtf8_NullAlphabet_Throws()
+    {
+        Assert.Throws<ArgumentNullException>(() => NanoId.GenerateUtf8(5, null!));
+        Assert.Throws<ArgumentNullException>(() => NanoId.GenerateUtf8(new byte[5], null!));
+    }
+
+    [Fact]
+    public void GenerateUtf8_EmptyAlphabet_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => NanoId.GenerateUtf8(5, string.Empty));
+        Assert.Throws<ArgumentException>(() => NanoId.GenerateUtf8(new byte[5], string.Empty));
+    }
+
+    [Fact]
+    public void GenerateUtf8_AlphabetLongerThan256_Throws()
+    {
+        string tooLong = new(Enumerable.Repeat('a', 257).ToArray());
+        Assert.Throws<ArgumentOutOfRangeException>(() => NanoId.GenerateUtf8(5, tooLong));
+        Assert.Throws<ArgumentOutOfRangeException>(() => NanoId.GenerateUtf8(new byte[5], tooLong));
+    }
+
+    [Theory]
+    [InlineData("你好")]
+    [InlineData("ab你")]
+    [InlineData("é")]
+    public void GenerateUtf8_NonAsciiAlphabet_Throws(string alphabet)
+    {
+        Assert.Throws<ArgumentException>(() => NanoId.GenerateUtf8(5, alphabet));
+        Assert.Throws<ArgumentException>(() => NanoId.GenerateUtf8(new byte[5], alphabet));
+    }
+
+    /// <summary>
+    /// 字节路径与字符串路径共享同一套采样算法，这里专门验证「原地压缩」拒绝采样没有破坏均匀性。
+    /// </summary>
+    [Theory]
+    [InlineData(nameof(Alphabet.Base32))]   // 位掩码快路径
+    [InlineData(nameof(Alphabet.Base58))]   // 拒绝采样路径
+    public void GenerateUtf8_CharacterDistributionIsUniform(string fieldName)
+    {
+        string alphabet = GetAlphabet(fieldName);
+        const int samplesPerChar = 2_000;
+        int samples = alphabet.Length * samplesPerChar;
+        var counts = new int[alphabet.Length];
+
+        for (int i = 0; i < samples; i++)
+            counts[alphabet.IndexOf((char)NanoId.GenerateUtf8(1, alphabet)[0])]++;
 
         for (int i = 0; i < counts.Length; i++)
             Assert.True(counts[i] > 0, $"字符 '{alphabet[i]}' 在 {samples} 次采样中从未出现");
