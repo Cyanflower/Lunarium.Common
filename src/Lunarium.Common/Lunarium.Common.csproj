@@ -24,7 +24,7 @@
 
   <!-- ===== NuGet Info ===== -->
   <PropertyGroup>
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
     <Authors>Cyanflower</Authors>
     <Description>A zero-dependency .NET common library: character-set constants, NanoID and lock-free snowflake ID generation, dirty/CTS-based debouncers, and a debounced JSON file-backed key-value cache store. Native AOT compatible.</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
