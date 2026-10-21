@@ -83,18 +83,21 @@ Uri uri = proxy.ToUri();
 ### 缓存落盘位置
 
 `CacheStore` 默认把数据写在 `{AppContext.BaseDirectory}/CacheStore/{cacheNamespace}.json`。
-容器（需挂卷）、systemd 只读 root、安装在 `/usr/lib` 等不可写目录的场景，请显式指定可写根目录：
+容器（需挂卷）、systemd 只读 root、安装在 `/usr/lib` 等不可写目录的场景，请显式指定可写目录：
 
 ```csharp
-// 默认：AppContext.BaseDirectory
+// 默认：AppContext.BaseDirectory/CacheStore/{ns}.json
 var store = new CacheStore("bot-state");
 
-// 指定存储根目录 → 文件落在 {root}/CacheStore/{ns}.json
+// 显式目录 → 直接落在 {dir}/{ns}.json（不会再追加 CacheStore 子目录）
 var store = new CacheStore("bot-state", storageDirectory: "/var/lib/lunarium");
+
+// 相对路径以 AppContext.BaseDirectory 为基准解析，不依赖进程当前目录
+var other = new CacheStore("other", storageDirectory: "data");
 ```
 
-子目录名与文件命名规则只在库内定义一处（`CacheStore.DataDirectoryName`，internal），
-测试通过向构造函数注入临时目录保证隔离，**不要在测试里复刻路径约定**。
+`CacheStore.DataDirectoryName`（internal）只作为缺省目录名；进程内以解析后的**完整文件路径**去重，
+同名命名空间落在不同目录下互不影响。测试通过向构造函数注入临时目录保证隔离，**不要在测试里复刻路径约定**。
 
 ## 常用命令
 

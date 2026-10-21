@@ -45,7 +45,7 @@ public class CacheStoreTests
     }
 
     [Fact]
-    public async Task Constructor_DuplicateNamespace_Throws()
+    public async Task Constructor_DuplicatePath_Throws()
     {
         using var storage = new TempStorage();
         string ns = TestHelpers.UniqueNamespace();
@@ -55,7 +55,7 @@ public class CacheStoreTests
     }
 
     [Fact]
-    public async Task DisposeAsync_ReleasesNamespaceAndBlocksFurtherUse()
+    public async Task DisposeAsync_ReleasesPathAndBlocksFurtherUse()
     {
         using var storage = new TempStorage();
         string ns = TestHelpers.UniqueNamespace();
@@ -63,7 +63,7 @@ public class CacheStoreTests
         var store = new CacheStore(ns, storageDirectory: storage.Root);
         await store.DisposeAsync();
 
-        // 命名空间占位已释放 → 可再次创建同名实例
+        // 路径占位已释放 → 可再次创建指向同一文件的实例
         await using var again = new CacheStore(ns, storageDirectory: storage.Root);
         Assert.Equal(0, again.Get<int>("k"));
 
@@ -89,6 +89,8 @@ public class CacheStoreTests
 
         Assert.True(File.Exists(path), $"缓存文件未落在注入的目录中: {path}");
         Assert.False(File.Exists(path + ".tmp"));
+        // 显式目录直接使用, 不应再追加 DataDirectoryName 子目录
+        Assert.False(Directory.Exists(Path.Combine(storage.Root, CacheStore.DataDirectoryName)));
 
         string json = await File.ReadAllTextAsync(path);
         Assert.Contains("月球观测站", json);        // Encoder 生效
@@ -143,7 +145,7 @@ public class CacheStoreTests
         Assert.Throws<CacheFileCorruptException>(
             () => new CacheStore(ns, storageDirectory: storage.Root));
 
-        // 构造失败必须释放命名空间占位，否则调用方修正文件后也无法重试
+        // 构造失败必须释放路径占位，否则调用方修正文件后也无法重试
         await File.WriteAllTextAsync(path, "{}");
         await using var store = new CacheStore(ns, storageDirectory: storage.Root);
         Assert.Equal(0, store.Get<int>("missing"));
@@ -194,13 +196,13 @@ public class CacheStoreTests
     }
 
     [Fact]
-    public async Task RelativeStorageDirectory_IsResolvedToAbsolutePath()
+    public async Task RelativeStorageDirectory_IsResolvedAgainstBaseDirectory()
     {
         using var storage = new TempStorage();
         string ns = TestHelpers.UniqueNamespace();
 
-        // 传相对路径：应基于「进程当前目录」解析，且不受后续 CWD 变化影响
-        string relative = Path.GetRelativePath(Directory.GetCurrentDirectory(), storage.Root);
+        // 相对路径以 AppContext.BaseDirectory 为基准（与默认位置一致），而不是进程当前目录
+        string relative = Path.GetRelativePath(AppContext.BaseDirectory, storage.Root);
 
         await using (var store = new CacheStore(ns, storageDirectory: relative))
         {
@@ -212,16 +214,39 @@ public class CacheStoreTests
     }
 
     [Fact]
-    public async Task DifferentStorageDirectories_StillShareNamespaceRegistry()
+    public async Task Constructor_SameResolvedPathInDifferentForms_Throws()
+    {
+        using var storage = new TempStorage();
+        string ns = TestHelpers.UniqueNamespace();
+
+        await using var first = new CacheStore(ns, storageDirectory: storage.Root);
+
+        // 相对路径、尾随分隔符等写法解析后指向同一文件 → 仍应视为重复
+        string relative = Path.GetRelativePath(AppContext.BaseDirectory, storage.Root);
+        string trailingSeparator = storage.Root + Path.DirectorySeparatorChar;
+
+        Assert.Throws<InvalidOperationException>(() => new CacheStore(ns, storageDirectory: relative));
+        Assert.Throws<InvalidOperationException>(() => new CacheStore(ns, storageDirectory: trailingSeparator));
+    }
+
+    [Fact]
+    public async Task DifferentStorageDirectories_AreIndependent()
     {
         using var storageA = new TempStorage();
         using var storageB = new TempStorage();
         string ns = TestHelpers.UniqueNamespace();
 
-        // 命名空间注册表是进程级的：即使存储目录不同，同名命名空间仍应被拒绝，
-        // 避免两个实例写同一份数据却互不知情。
+        // 去重键是完整文件路径：同名命名空间落在不同目录下互不干扰
         await using var first = new CacheStore(ns, storageDirectory: storageA.Root);
-        Assert.Throws<InvalidOperationException>(
-            () => new CacheStore(ns, storageDirectory: storageB.Root));
+        await using var second = new CacheStore(ns, storageDirectory: storageB.Root);
+
+        first.Set("k", 1);
+        second.Set("k", 2);
+        await first.FlushAsync();
+
+        Assert.True(File.Exists(storageA.FileFor(ns)));
+        Assert.False(File.Exists(storageB.FileFor(ns)));
+        Assert.Equal(1, first.Get<int>("k"));
+        Assert.Equal(2, second.Get<int>("k"));
     }
 }

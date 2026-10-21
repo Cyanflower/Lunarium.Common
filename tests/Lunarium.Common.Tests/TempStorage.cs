@@ -17,14 +17,12 @@ internal sealed class TempStorage : IDisposable
     public string Root { get; }
 
     /// <summary>
-    /// 按库内约定拼出某个命名空间的缓存文件路径。
-    /// 目录名取自库内的 <see cref="CacheStore.DataDirectoryName"/>，避免测试复刻约定。
+    /// 某个命名空间的缓存文件路径：显式传入的存储目录会被直接使用，文件名为 <c>{cacheNamespace}.json</c>。
     /// </summary>
-    public string FileFor(string cacheNamespace) =>
-        Path.Combine(Root, CacheStore.DataDirectoryName, cacheNamespace + ".json");
+    public string FileFor(string cacheNamespace) => Path.Combine(Root, cacheNamespace + ".json");
 
     /// <summary>缓存文件所在目录。</summary>
-    public string Directory => Path.Combine(Root, CacheStore.DataDirectoryName);
+    public string Directory => Root;
 
     public void Dispose()
     {
