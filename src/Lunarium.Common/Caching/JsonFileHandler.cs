@@ -27,10 +27,6 @@ internal sealed class JsonFileHandler(string filePath)
     /// <param name="ct">用于取消写入操作的取消令牌</param>
     public async Task SaveToFileAsync(Cache cache, CancellationToken ct = default)
     {
-        string? directory = Path.GetDirectoryName(filePath);
-        if (!string.IsNullOrEmpty(directory))
-            Directory.CreateDirectory(directory); // 幂等, 已存在时为无操作
-
         // 内存序列化(放在锁外, 避免持锁做 CPU 工作)
         // 走源生成的 JsonTypeInfo 重载, 不用反射元数据; 泛型 + JsonSerializerOptions 的重载带
         // RequiresUnreferencedCode/RequiresDynamicCode, 即便配了 resolver 也仍会报 IL2026/IL3050
@@ -40,10 +36,7 @@ internal sealed class JsonFileHandler(string filePath)
         await _fileLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            // 同目录临时文件 + 原子改名: 目标文件永远是完整内容, 不会出现半截写入
-            string tempPath = filePath + ".tmp";
-            await File.WriteAllTextAsync(tempPath, json, ct).ConfigureAwait(false);
-            File.Move(tempPath, filePath, overwrite: true);
+            await JsonFileIO.WriteAllTextAsync(filePath, json, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -86,13 +79,5 @@ internal sealed class JsonFileHandler(string filePath)
     /// <summary>
     /// 将当前(损坏的)缓存文件改名留档, 便于事后排查, 返回留档后的路径; 文件不存在时返回 <c>null</c>。
     /// </summary>
-    public string? ArchiveCorruptFile()
-    {
-        if (!File.Exists(filePath))
-            return null;
-
-        string archivedPath = $"{filePath}.corrupt-{DateTime.Now:yyyyMMddHHmmss}";
-        File.Move(filePath, archivedPath, overwrite: true);
-        return archivedPath;
-    }
+    public string? ArchiveCorruptFile() => JsonFileIO.ArchiveCorrupt(filePath);
 }

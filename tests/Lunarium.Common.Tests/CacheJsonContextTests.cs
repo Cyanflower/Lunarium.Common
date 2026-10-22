@@ -13,6 +13,14 @@ namespace Lunarium.Common.Tests;
 public class CacheJsonContextTests
 {
     [Fact]
+    public void ReflectionSerialization_IsDisabledForTests()
+    {
+        // 测试项目通过 JsonSerializerIsReflectionEnabledByDefault=false 关闭反射回退;
+        // 本断言防止该开关被误删后, 反射路径重新变成"能跑但 AOT 下炸"的隐患.
+        Assert.False(JsonSerializer.IsReflectionEnabledByDefault);
+    }
+
+    [Fact]
     public void Context_ProvidesMetadataForCache()
     {
         JsonTypeInfo? info = CacheJsonContext.Default.GetTypeInfo(typeof(Cache));

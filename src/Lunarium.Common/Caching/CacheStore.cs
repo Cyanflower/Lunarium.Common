@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Lunarium.Common.Debounce;
 
 namespace Lunarium.Common.Caching;
@@ -22,11 +21,6 @@ public sealed class CacheStore : IAsyncDisposable
     private readonly string _cacheFilePath;
     private bool _isDisposed;
     private Action<Exception>? _logError;
-
-    // 进程级文件路径占用表: 键为解析后的完整文件路径, 防止两个实例写同一个缓存文件。
-    // Windows 文件系统大小写不敏感, 用 OrdinalIgnoreCase 避免大小写不同的同一路径被放行。
-    private static readonly ConcurrentDictionary<string, byte> CacheStorePaths =
-        new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
     /// <summary>
     /// 初始化 <see cref="CacheStore"/> 的新实例。
@@ -60,16 +54,14 @@ public sealed class CacheStore : IAsyncDisposable
             throw new ArgumentException("cacheNamespace 包含路径非法字符", nameof(cacheNamespace));
 
         // DataDirectoryName 只是缺省值: 显式传入目录时直接落盘到该目录
-        string cacheDirectory = storageDirectory is null
-            ? Path.Combine(AppContext.BaseDirectory, DataDirectoryName)
-            : ResolveStorageDirectory(storageDirectory);
-        string cacheFilePath = Path.Combine(cacheDirectory, $"{cacheNamespace}.json");
+        string cacheFilePath = CacheFileRegistry.ResolveFile(cacheNamespace, DataDirectoryName, storageDirectory);
 
-        // 以整条文件路径去重: 同名命名空间落在不同目录互不影响, 同一文件只允许一个实例占用
-        if (!CacheStorePaths.TryAdd(cacheFilePath, 0))
+        // 以整条文件路径去重: 同名命名空间落在不同目录互不影响, 同一文件只允许一个实例占用。
+        // 注册表由 CacheStore 与 JsonDocumentStore<T> 共享, 不同类型的实例也不能指向同一文件。
+        if (!CacheFileRegistry.TryAcquire(cacheFilePath))
             throw new InvalidOperationException($"缓存文件已被其他实例占用: {cacheFilePath}");
 
-        // TryAdd 成功之后, 任何失败都必须释放路径占位, 允许调用方修正后重试
+        // TryAcquire 成功之后, 任何失败都必须释放路径占位, 允许调用方修正后重试
         try
         {
             _cacheFilePath = cacheFilePath;
@@ -100,7 +92,7 @@ public sealed class CacheStore : IAsyncDisposable
         }
         catch
         {
-            CacheStorePaths.TryRemove(cacheFilePath, out _);
+            CacheFileRegistry.Release(cacheFilePath);
             throw;
         }
     }
@@ -194,15 +186,9 @@ public sealed class CacheStore : IAsyncDisposable
             _cts.Cancel();
             await _debouncer.DisposeAsync().ConfigureAwait(false);
             _cts.Dispose();
-            CacheStorePaths.TryRemove(_cacheFilePath, out _);
+            CacheFileRegistry.Release(_cacheFilePath);
         }
     }
-
-    // 相对路径以二进制所在目录为基准解析(不是进程当前目录): 库的默认位置同样基于 BaseDirectory,
-    // 且 systemd/容器/IDE 下的 CWD 往往不是调用方预期的目录。解析后统一去掉尾部分隔符,
-    // 保证 "dir"、"dir/"、绝对路径等不同写法得到同一个去重键。
-    private static string ResolveStorageDirectory(string storageDirectory) =>
-        Path.TrimEndingDirectorySeparator(Path.GetFullPath(storageDirectory, AppContext.BaseDirectory));
 
     private void OnError(Exception ex)
     {

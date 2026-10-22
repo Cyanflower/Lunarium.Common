@@ -37,7 +37,7 @@ Lunarium.Common/
 | `Net` | `Lunarium.Common.Net` | 代理配置 `ProxyUrl`：从环境变量获取并转换为 `IWebProxy` / `Uri` |
 | `UID` | `Lunarium.Common.UID` | `NanoID` 无取模偏差 ID 生成（可直接输出 UTF-8 字节）、`LocalSnowflake` 无锁单机雪花 ID |
 | `Debounce` | `Lunarium.Common.Debounce` | 脏状态防抖 `DirtyDebouncer` 与取消令牌防抖 `CtsDebouncer` |
-| `Caching` | `Lunarium.Common.Caching` | 并发内存 KV + 防抖异步落盘的强类型缓存存储（`CacheStore`） |
+| `Caching` | `Lunarium.Common.Caching` | 并发内存 KV + 防抖异步落盘（`CacheStore`）；单文档泛型存储（`JsonDocumentStore<T>`） |
 
 所有模块均为同一程序集内的并列工具集，零外部 NuGet 依赖（仅使用 BCL）。**不拆分独立项目**——
 仅当某模块需引入其他模块无法接受的重依赖、或需独立发版时才考虑拆分。
@@ -99,6 +99,38 @@ var other = new CacheStore("other", storageDirectory: "data");
 `CacheStore.DataDirectoryName`（internal）只作为缺省目录名；进程内以解析后的**完整文件路径**去重，
 同名命名空间落在不同目录下互不影响。测试通过向构造函数注入临时目录保证隔离，**不要在测试里复刻路径约定**。
 
+### 单文档存储（`JsonDocumentStore<T>`）
+
+当要持久化的是「一个完整的强类型文档」（配置、状态等）而不是键值对时，使用 `JsonDocumentStore<T>`：
+
+```csharp
+// 消费方提供源生成的类型信息（AOT/裁剪安全）；缩进、编码器、注释处理等选项也由该上下文决定
+[JsonSourceGenerationOptions(WriteIndented = true)]
+[JsonSerializable(typeof(TicketConfig))]
+internal partial class TicketConfigJsonContext : JsonSerializerContext;
+
+await using var store = new JsonDocumentStore<TicketConfig>(
+    "ticket-config",
+    TicketConfigJsonContext.Default.TicketConfig,
+    storageDirectory: "/var/lib/lunarium");
+
+TicketConfig config = store.Read();                // 深拷贝快照，可直接使用/修改
+store.Set(config);                                 // 保存快照并触发 5 秒防抖落盘
+store.Update(c => { c.TicketCd = 2; return c; });  // 锁内原子更新
+await store.FlushAsync();                          // 立即落盘（DisposeAsync 也会自动刷盘）
+```
+
+语义与约定：
+
+- **快照语义**：`Read` / `Set` / `Update` 都通过 JSON 往返做深拷贝，调用方持有的实例与存储内部状态互不影响；
+  因此 `[JsonIgnore]` 成员不参与快照与落盘（本存储以 JSON 中的内容为准）。
+- **不做业务校验**：校验是调用方策略（加载后校验、更新前校验）。不要放在保存阶段——防抖落盘是后台任务，
+  失败只能进 `logError`，调用方无法同步感知。
+- **落盘位置**：`{storageDirectory ?? AppContext.BaseDirectory/JsonDocumentStore}/{documentName}.json`；
+  与 `CacheStore` 共享进程级路径注册表，同一个文件不允许被任一存储类型的两个实例同时占用。
+- **损坏处理**：与 `CacheStore` 一致（`CacheFileCorruptException`；`allowCorruptRebuild` 必须同时提供 `logError`）。
+- **AOT**：只使用 `JsonSerializer` 的 `JsonTypeInfo<T>` 重载，调用方必须传入源生成上下文产出的类型信息。
+
 ## 常用命令
 
 ```bash
@@ -128,7 +160,7 @@ dotnet pack -c Release
 ### 新增需要 JSON 序列化的类型时必须同步登记
 
 `Cache` 的 JSON 元数据由源生成器在编译期静态产出（见 `Caching/CacheJsonContext.cs`）。
-**任何需要被 `JsonSerializer` 序列化 / 反序列化的类型，都必须登记到 `CacheJsonContext`：**
+**任何库内需要被 `JsonSerializer` 序列化 / 反序列化的类型，都必须登记到 `CacheJsonContext`：**
 
 ```csharp
 [JsonSourceGenerationOptions(WriteIndented = true)]
@@ -136,6 +168,9 @@ dotnet pack -c Release
 [JsonSerializable(typeof(新类型))]   // ← 忘登记不会编译失败，只会在 AOT / 裁剪后运行时才报错
 internal partial class CacheJsonContext : JsonSerializerContext;
 ```
+
+> `JsonDocumentStore<T>` 不在此列：文档根类型位于消费方程序集，由调用方自己的 `JsonSerializerContext` 提供
+> `JsonTypeInfo<T>`（见上文示例），库内不需要也无法登记。
 
 忘记登记属于「编译期无感、运行时炸」的静默失败：库本身编译通过、无任何告警，
 但 AOT / 裁剪后的应用会抛
@@ -170,6 +205,11 @@ dotnet build
 同时程序集会带上 `IsTrimmable` / `IsAotCompatible` 元数据，消费者裁剪本库时不会产生额外告警。
 注意该设置只开启分析器与标记，**不会**让库自身被 AOT 编译（类库不支持 `PublishAot`），
 真正的 AOT 编译只由最终的可执行项目触发。
+
+测试项目另通过 `<JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>`
+关闭了 System.Text.Json 的反射回退；`CacheStore` 与 `JsonDocumentStore<T>` 的全部读写测试都在该模式下运行。
+一旦误用反射序列化，测试会立即失败，而不是等到 AOT 运行时才抛
+`Reflection-based serialization has been disabled for this application.`。
 
 ### Encoder 需经由 options 实例传递（易踩）
 

@@ -26,7 +26,7 @@
   <PropertyGroup>
     <Version>1.2.1</Version>
     <Authors>Cyanflower</Authors>
-    <Description>A zero-dependency .NET common library: character-set constants, NanoID and lock-free snowflake ID generation, dirty/CTS-based debouncers, and a debounced JSON file-backed key-value cache store. Native AOT compatible.</Description>
+    <Description>A zero-dependency .NET common library: character-set constants, NanoID and lock-free snowflake ID generation, dirty/CTS-based debouncers, and debounced JSON file-backed key-value and single-document stores. Native AOT compatible.</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/Cyanflower/Lunarium.Common</PackageProjectUrl>
     <RepositoryUrl>https://github.com/Cyanflower/Lunarium.Common.git</RepositoryUrl>
