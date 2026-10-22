@@ -1,0 +1,282 @@
+name: Discord Notify
+
+# 由仓库事件触发的富内容通知；Webhook URL 存放在
+# Settings → Secrets and variables → Actions → DISCORD_WEBHOOK_URL
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_run:
+    # 名称必须与 ci.yml / cd.yml 的 name 完全一致
+    workflows: [CI, CD]
+    types: [completed]
+  pull_request:
+    # 合并 PR 会同时产生 push(main) 与 closed 两条通知；
+    # 若只想保留 push 通知，把 closed 从这里移除。
+    types: [opened, reopened, ready_for_review, closed]
+  issues:
+    types: [opened, reopened, closed, labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  discord:
+    name: Send Discord notification
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    # fork PR 拿不到 secrets；同时避免用不可信 PR 的内容触发仓库级通知
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - name: Send
+        shell: bash
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
+            echo "DISCORD_WEBHOOK_URL 未配置，跳过通知"
+            echo "请在 Settings → Secrets and variables → Actions 中创建该 Secret"
+            exit 0
+          fi
+
+          event="$GITHUB_EVENT_PATH"
+
+          case "$EVENT_NAME" in
+            release)
+              payload=$(jq '{
+                username: "Lunarium CI",
+                allowed_mentions: { parse: [] },
+                embeds: [{
+                  title: (
+                    ("Release " + .release.tag_name
+                     + (if .release.prerelease then " (pre-release)" else "" end))[0:250]
+                  ),
+                  url: .release.html_url,
+                  description: (
+                    (.release.body // "") as $body
+                    | if $body == "" then "（无 Release 说明）" else $body[0:3900] end
+                  ),
+                  color: (if .release.prerelease then 16776960 else 5763719 end),
+                  author: {
+                    name: .release.author.login,
+                    icon_url: .release.author.avatar_url
+                  },
+                  fields: [
+                    { name: "标签", value: .release.tag_name, inline: true }
+                  ],
+                  timestamp: (.release.published_at // .release.created_at)
+                }]
+              }' "$event")
+              ;;
+
+            push)
+              payload=$(jq '{
+                username: "Lunarium CI",
+                allowed_mentions: { parse: [] },
+                embeds: [{
+                  title: (
+                    ("Push to " + (.ref | sub("^refs/heads/"; "")))[0:250]
+                  ),
+                  url: .compare,
+                  description: (
+                    ([.commits[] |
+                      ("`" + (.id[0:7]) + "` "
+                       + ((.message | split("\n")[0])[0:120])
+                       + " — "
+                       + ((.author // {}) | (.name // .email // "unknown")))]
+                     | join("\n")) as $lines
+                    | ((.distinct_size // (.commits | length))) as $total
+                    | ((if $lines == "" then "（无提交）" else $lines end)
+                       + (if $total > (.commits | length)
+                          then "\n… 仅显示前 " + ((.commits | length) | tostring)
+                               + " 条，共 " + ($total | tostring) + " 条"
+                          else "" end))[0:3900]
+                  ),
+                  color: 3447003,
+                  fields: [
+                    {
+                      name: "提交数",
+                      value: ((.distinct_size // (.commits | length)) | tostring),
+                      inline: true
+                    },
+                    { name: "推送者", value: .pusher.name, inline: true }
+                  ],
+                  timestamp: (.head_commit.timestamp // .repository.pushed_at)
+                }]
+              }' "$event")
+              ;;
+
+            pull_request)
+              payload=$(jq '{
+                username: "Lunarium CI",
+                allowed_mentions: { parse: [] },
+                embeds: [{
+                  title: (
+                    ((if .action == "closed" and .pull_request.merged then "已合并 "
+                      elif .action == "closed" then "已关闭 "
+                      else "PR " end)
+                     + "#" + (.pull_request.number | tostring)
+                     + " " + .pull_request.title)[0:250]
+                  ),
+                  url: .pull_request.html_url,
+                  description: (
+                    (.pull_request.body // "") as $body
+                    | if $body == "" then "（无描述）" else $body[0:3900] end
+                  ),
+                  color: (
+                    if .pull_request.merged then 10181046
+                    elif .action == "closed" then 15158332
+                    else 3447003 end
+                  ),
+                  author: {
+                    name: .pull_request.user.login,
+                    icon_url: .pull_request.user.avatar_url
+                  },
+                  fields: [
+                    { name: "作者", value: .pull_request.user.login, inline: true },
+                    {
+                      name: "分支",
+                      value: (.pull_request.head.ref + " → " + .pull_request.base.ref),
+                      inline: true
+                    },
+                    {
+                      name: "变更",
+                      value: ("+" + (.pull_request.additions | tostring)
+                              + " / -" + (.pull_request.deletions | tostring)
+                              + " · " + (.pull_request.changed_files | tostring) + " files"),
+                      inline: false
+                    },
+                    {
+                      name: "标签",
+                      value: (
+                        ((.pull_request.labels // []) | map(.name) | join(", "))
+                        | if . == "" then "无" else .[0:1000] end
+                      ),
+                      inline: false
+                    }
+                  ],
+                  timestamp: .pull_request.updated_at
+                }]
+              }' "$event")
+              ;;
+
+            issues)
+              payload=$(jq '{
+                username: "Lunarium CI",
+                allowed_mentions: { parse: [] },
+                embeds: [{
+                  title: (
+                    ("Issue #" + (.issue.number | tostring) + " " + .issue.title)[0:250]
+                  ),
+                  url: .issue.html_url,
+                  description: (
+                    (.issue.body // "") as $body
+                    | if $body == "" then "（无描述）" else $body[0:3900] end
+                  ),
+                  color: (if .action == "closed" then 9807270 else 15105570 end),
+                  author: {
+                    name: .issue.user.login,
+                    icon_url: .issue.user.avatar_url
+                  },
+                  fields: [
+                    { name: "动作", value: .action, inline: true },
+                    { name: "作者", value: .issue.user.login, inline: true },
+                    {
+                      name: "标签",
+                      value: (
+                        ((.issue.labels // []) | map(.name) | join(", "))
+                        | if . == "" then "无" else .[0:1000] end
+                      ),
+                      inline: false
+                    }
+                  ],
+                  timestamp: .issue.updated_at
+                }]
+              }' "$event")
+              ;;
+
+            workflow_dispatch)
+              payload=$(jq -n \
+                --arg repo "$GITHUB_REPOSITORY" \
+                --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+                '{
+                  username: "Lunarium CI",
+                  content: ("Discord 通知连通性测试 — " + $repo + "\n" + $run)
+                }')
+              ;;
+
+            workflow_run)
+              payload=$(jq '
+                (.workflow_run.head_branch // "") as $ref
+                | ($ref | sub("^v"; "")) as $version
+                | (if .workflow_run.conclusion == "success" then "成功"
+                   elif .workflow_run.conclusion == "failure" then "失败"
+                   elif .workflow_run.conclusion == "cancelled" then "已取消"
+                   elif .workflow_run.conclusion == "skipped" then "已跳过"
+                   elif .workflow_run.conclusion == "timed_out" then "超时"
+                   elif .workflow_run.conclusion == "action_required" then "需要处理"
+                   else .workflow_run.conclusion end) as $status
+                | (if .workflow_run.conclusion == "success" then 5763719
+                   elif .workflow_run.conclusion == "failure" then 15158332
+                   elif .workflow_run.conclusion == "cancelled" then 15105570
+                   else 9807270 end) as $color
+                | {
+                    username: "Lunarium CI",
+                    allowed_mentions: { parse: [] },
+                    embeds: [{
+                      title: (
+                        (.workflow_run.name + " " + $status
+                         + (if $ref != "" then " — " + $ref else "" end))[0:250]
+                      ),
+                      url: .workflow_run.html_url,
+                      color: $color,
+                      author: {
+                        name: (.workflow_run.actor.login // "GitHub Actions"),
+                        icon_url: .workflow_run.actor.avatar_url
+                      },
+                      description: (
+                        ((.workflow_run.head_commit.message // "") | split("\n")[0]) as $msg
+                        | if $msg == "" then "（无提交信息）" else $msg[0:3900] end
+                      ),
+                      fields: ([
+                        { name: "工作流", value: .workflow_run.name, inline: true },
+                        { name: "事件", value: .workflow_run.event, inline: true },
+                        { name: "分支/标签", value: (if $ref == "" then "—" else $ref end), inline: true }
+                      ] + (if .workflow_run.name == "CD"
+                             and .workflow_run.conclusion == "success"
+                             and ($version | test("^[0-9]"))
+                           then [{
+                             name: "NuGet",
+                             value: (
+                               "[NuGet " + $version + "](https://www.nuget.org/packages/"
+                               + (.repository.name // "Lunarium.Common") + "/" + $version + ")"
+                             ),
+                             inline: true
+                           }]
+                           else [] end)),
+                      timestamp: (.workflow_run.updated_at // .workflow_run.run_started_at)
+                    }]
+                  }' "$event")
+              ;;
+
+            *)
+              echo "未处理的事件: $EVENT_NAME，跳过通知"
+              exit 0
+              ;;
+          esac
+
+          curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-delay 2 --max-time 20 \
+            -X POST "${DISCORD_WEBHOOK_URL}?wait=true" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: Lunarium.Common-CI" \
+            --data-binary "$payload"
