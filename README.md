@@ -34,7 +34,7 @@ Lunarium.Common/
 | --- | --- | --- |
 | `Alphabet` | `Lunarium.Common` | 常用字符集常量（Base16/32/36/62、防混淆、密码字符集等） |
 | `EnvVar` | `Lunarium.Common` | 环境变量包装：读取 / 写入 / 删除 + 类型化解析（`As<T>`、`AsEnum`、宽松布尔字面量） |
-| `Net` | `Lunarium.Common.Net` | 代理配置 `ProxyUrl`：从环境变量获取并转换为 `IWebProxy` / `Uri` |
+| `Net` | `Lunarium.Common.Net` | 代理配置 `ProxyUrl`（转换为 `IWebProxy` / `Uri`）；通用环境 URL `EnvUrl`（转换为 `Uri`） |
 | `UID` | `Lunarium.Common.UID` | `NanoID` 无取模偏差 ID 生成（可直接输出 UTF-8 字节）、`LocalSnowflake` 无锁单机雪花 ID |
 | `Debounce` | `Lunarium.Common.Debounce` | 脏状态防抖 `DirtyDebouncer` 与取消令牌防抖 `CtsDebouncer` |
 | `Caching` | `Lunarium.Common.Caching` | 并发内存 KV + 防抖异步落盘（`CacheStore`）；单文档泛型存储（`JsonDocumentStore<T>`） |
@@ -78,6 +78,13 @@ DayOfWeek day = EnvVar.GetRequired("DAY").AsEnum(DayOfWeek.Monday);
 ProxyUrl? proxy = ProxyUrl.FromEnvironment();   // 也可指定变量名：FromEnvironment("MY_PROXY")
 IWebProxy webProxy = proxy.ToWebProxy();
 Uri uri = proxy.ToUri();
+```
+
+非代理场景的环境 URL 用 `EnvUrl`（语义更明确；没有默认变量名，也不提供 `ToWebProxy`）：
+
+```csharp
+EnvUrl? baseUrl = EnvUrl.FromEnvironment("API_BASE_URL");
+Uri uri = baseUrl.ToUri();
 ```
 
 ### 缓存落盘位置
