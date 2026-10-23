@@ -1,23 +1,15 @@
 name: Discord Notify
 
-# 由仓库事件触发的富内容通知；Webhook URL 存放在
-# Settings → Secrets and variables → Actions → DISCORD_WEBHOOK_URL
+# Actions 只发 Release 与 CI/CD 完成通知；push / PR / issue 由 Discord 原生 GitHub webhook 发送。
+# Webhook URL 存放在 Settings → Secrets and variables → Actions → DISCORD_WEBHOOK_URL
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
   release:
     types: [published]
   workflow_run:
     # 名称必须与 ci.yml / cd.yml 的 name 完全一致
     workflows: [CI, CD]
     types: [completed]
-  pull_request:
-    # 合并 PR 会同时产生 push(main) 与 closed 两条通知；
-    # 若只想保留 push 通知，把 closed 从这里移除。
-    types: [opened, reopened, ready_for_review, closed]
-  issues:
-    types: [opened, reopened, closed, labeled]
 
 permissions:
   contents: read
@@ -74,132 +66,6 @@ jobs:
                     { name: "标签", value: .release.tag_name, inline: true }
                   ],
                   timestamp: (.release.published_at // .release.created_at)
-                }]
-              }' "$event")
-              ;;
-
-            push)
-              payload=$(jq '{
-                username: "Lunarium CI",
-                allowed_mentions: { parse: [] },
-                embeds: [{
-                  title: (
-                    ("Push to " + (.ref | sub("^refs/heads/"; "")))[0:250]
-                  ),
-                  url: .compare,
-                  description: (
-                    ([.commits[] |
-                      ("`" + (.id[0:7]) + "` "
-                       + ((.message | split("\n")[0])[0:120])
-                       + " — "
-                       + ((.author // {}) | (.name // .email // "unknown")))]
-                     | join("\n")) as $lines
-                    | ((.distinct_size // (.commits | length))) as $total
-                    | ((if $lines == "" then "（无提交）" else $lines end)
-                       + (if $total > (.commits | length)
-                          then "\n… 仅显示前 " + ((.commits | length) | tostring)
-                               + " 条，共 " + ($total | tostring) + " 条"
-                          else "" end))[0:3900]
-                  ),
-                  color: 3447003,
-                  fields: [
-                    {
-                      name: "提交数",
-                      value: ((.distinct_size // (.commits | length)) | tostring),
-                      inline: true
-                    },
-                    { name: "推送者", value: .pusher.name, inline: true }
-                  ],
-                  timestamp: (.head_commit.timestamp // .repository.pushed_at)
-                }]
-              }' "$event")
-              ;;
-
-            pull_request)
-              payload=$(jq '{
-                username: "Lunarium CI",
-                allowed_mentions: { parse: [] },
-                embeds: [{
-                  title: (
-                    ((if .action == "closed" and .pull_request.merged then "已合并 "
-                      elif .action == "closed" then "已关闭 "
-                      else "PR " end)
-                     + "#" + (.pull_request.number | tostring)
-                     + " " + .pull_request.title)[0:250]
-                  ),
-                  url: .pull_request.html_url,
-                  description: (
-                    (.pull_request.body // "") as $body
-                    | if $body == "" then "（无描述）" else $body[0:3900] end
-                  ),
-                  color: (
-                    if .pull_request.merged then 10181046
-                    elif .action == "closed" then 15158332
-                    else 3447003 end
-                  ),
-                  author: {
-                    name: .pull_request.user.login,
-                    icon_url: .pull_request.user.avatar_url
-                  },
-                  fields: [
-                    { name: "作者", value: .pull_request.user.login, inline: true },
-                    {
-                      name: "分支",
-                      value: (.pull_request.head.ref + " → " + .pull_request.base.ref),
-                      inline: true
-                    },
-                    {
-                      name: "变更",
-                      value: ("+" + (.pull_request.additions | tostring)
-                              + " / -" + (.pull_request.deletions | tostring)
-                              + " · " + (.pull_request.changed_files | tostring) + " files"),
-                      inline: false
-                    },
-                    {
-                      name: "标签",
-                      value: (
-                        ((.pull_request.labels // []) | map(.name) | join(", "))
-                        | if . == "" then "无" else .[0:1000] end
-                      ),
-                      inline: false
-                    }
-                  ],
-                  timestamp: .pull_request.updated_at
-                }]
-              }' "$event")
-              ;;
-
-            issues)
-              payload=$(jq '{
-                username: "Lunarium CI",
-                allowed_mentions: { parse: [] },
-                embeds: [{
-                  title: (
-                    ("Issue #" + (.issue.number | tostring) + " " + .issue.title)[0:250]
-                  ),
-                  url: .issue.html_url,
-                  description: (
-                    (.issue.body // "") as $body
-                    | if $body == "" then "（无描述）" else $body[0:3900] end
-                  ),
-                  color: (if .action == "closed" then 9807270 else 15105570 end),
-                  author: {
-                    name: .issue.user.login,
-                    icon_url: .issue.user.avatar_url
-                  },
-                  fields: [
-                    { name: "动作", value: .action, inline: true },
-                    { name: "作者", value: .issue.user.login, inline: true },
-                    {
-                      name: "标签",
-                      value: (
-                        ((.issue.labels // []) | map(.name) | join(", "))
-                        | if . == "" then "无" else .[0:1000] end
-                      ),
-                      inline: false
-                    }
-                  ],
-                  timestamp: .issue.updated_at
                 }]
               }' "$event")
               ;;
