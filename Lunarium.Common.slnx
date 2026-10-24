@@ -5,4 +5,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Lunarium.Common.Tests/Lunarium.Common.Tests.csproj" />
   </Folder>
+  <Folder Name="/docs/">
+    <Project Path="docs/examples/Lunarium.Common.Examples.csproj" />
+  </Folder>
 </Solution>

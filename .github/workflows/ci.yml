@@ -7,12 +7,16 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+      - 'docs/**'
+      - 'README.md'
       - '*.slnx'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - 'src/**'
       - 'tests/**'
+      - 'docs/**'
+      - 'README.md'
       - '*.slnx'
       - '.github/workflows/ci.yml'
 
@@ -39,6 +43,10 @@ jobs:
       # 因此这一步同时充当 AOT/裁剪兼容性的回归防线。
       - name: Test
         run: dotnet test --configuration Release --no-build
+
+      # 示例项目已加入解决方案; 这一步验证文档示例不仅能编译, 也能实际运行
+      - name: Run examples
+        run: dotnet run --project docs/examples/Lunarium.Common.Examples.csproj --configuration Release --no-build -- all
 
       # 把打包也纳入 CI：否则包元数据/README 打包要到发版时才第一次被验证
       - name: Pack (verify packaging)

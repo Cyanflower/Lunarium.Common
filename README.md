@@ -2,6 +2,8 @@
 
 Lunarium 项目的公共类库（shared class library），用于存放跨项目复用的通用类型与工具代码。
 
+> 完整文档：[使用指南与模块索引](https://github.com/Cyanflower/Lunarium.Common/blob/main/docs/README.md) ｜ [API 速查](https://github.com/Cyanflower/Lunarium.Common/blob/main/docs/api/README.md) ｜ [可运行示例](https://github.com/Cyanflower/Lunarium.Common/blob/main/docs/examples/README.md)
+
 ## 环境要求
 
 - .NET SDK 10.0 或更高版本（可同时构建 net8.0 / net9.0 目标）
@@ -22,7 +24,11 @@ Lunarium.Common/
 │   ├── Debounce/               # Lunarium.Common.Debounce
 │   └── Caching/                # Lunarium.Common.Caching（含 CacheJsonContext 源生成上下文）
 ├── tests/Lunarium.Common.Tests/ # xUnit 单元测试（靠 InternalsVisibleTo 直接测 internal 类型）
-├── Lunarium.Common.slnx        # 解决方案文件（.NET 10 新格式，含 /src/ 与 /tests/ 解决方案文件夹）
+├── docs/                       # 使用指南、API 速查、可运行示例
+│   ├── README.md               # 使用指南与模块索引
+│   ├── api/                    # 按模块拆分的 API 参考
+│   └── examples/               # 可运行控制台示例（已加入 .slnx）
+├── Lunarium.Common.slnx        # 解决方案文件（.NET 10 新格式，含 /src/、/tests/、/docs/ 解决方案文件夹）
 ├── .gitignore                  # 标准 .NET 忽略规则
 ├── LICENSE                     # Apache License 2.0
 └── README.md
@@ -35,134 +41,90 @@ Lunarium.Common/
 | `Alphabet` | `Lunarium.Common` | 常用字符集常量（Base16/32/36/62、防混淆、密码字符集等） |
 | `EnvVar` | `Lunarium.Common` | 环境变量包装：读取 / 写入 / 删除 + 类型化解析（`As<T>`、`AsEnum`、宽松布尔字面量） |
 | `Net` | `Lunarium.Common.Net` | 代理配置 `ProxyUrl`（转换为 `IWebProxy` / `Uri`）；通用环境 URL `EnvUrl`（转换为 `Uri`） |
-| `UID` | `Lunarium.Common.UID` | `NanoID` 无取模偏差 ID 生成（可直接输出 UTF-8 字节）、`LocalSnowflake` 无锁单机雪花 ID |
+| `UID` | `Lunarium.Common.UID` | `NanoId` 无取模偏差 ID 生成（可直接输出 UTF-8 字节）、`LocalSnowflake` 无锁单机雪花 ID |
 | `Debounce` | `Lunarium.Common.Debounce` | 脏状态防抖 `DirtyDebouncer` 与取消令牌防抖 `CtsDebouncer` |
 | `Caching` | `Lunarium.Common.Caching` | 并发内存 KV + 防抖异步落盘（`CacheStore`）；单文档泛型存储（`JsonDocumentStore<T>`） |
 
 所有模块均为同一程序集内的并列工具集，零外部 NuGet 依赖（仅使用 BCL）。**不拆分独立项目**——
 仅当某模块需引入其他模块无法接受的重依赖、或需独立发版时才考虑拆分。
 
-### 环境变量读取（`EnvVar`）
+## 快速上手
+
+完整的使用指南、模块索引、选型与边界见 [docs/README.md](https://github.com/Cyanflower/Lunarium.Common/blob/main/docs/README.md)；逐成员 API 见 [docs/api/](https://github.com/Cyanflower/Lunarium.Common/blob/main/docs/api/README.md)，可运行示例见 [docs/examples/](https://github.com/Cyanflower/Lunarium.Common/blob/main/docs/examples/README.md)。
+
+### 环境变量
 
 ```csharp
-// 读取：未设置或值为空白时返回 null；必须存在时用 GetRequired（否则抛异常）
+using Lunarium.Common;
+
 string? port = EnvVar.Get("PORT")?.Value;
+int timeout = EnvVar.GetRequired("TIMEOUT").As(30);
+bool enabled = EnvVar.GetRequired("FEATURE_X").As<bool>();
 
-// 候选名按优先级依次尝试，第一个命中的生效
-EnvVar? proxy = EnvVar.GetAny("http_proxy", "HTTP_PROXY");
-
-// 写入 / 删除：名称与值都会被裁剪首尾空白
 EnvVar.Set("MODE", "production");
 EnvVar.Unset("MODE");
-
-// 类型化解析：泛型走 IParsable<T>（固定不变文化），失败返回默认值 / 抛异常
-int timeout = EnvVar.GetRequired("TIMEOUT").As(30);
-DayOfWeek day = EnvVar.GetRequired("DAY").AsEnum(DayOfWeek.Monday);
 ```
 
-语义要点（与 BCL 的 `Environment.GetEnvironmentVariable` 不同之处）：
+`EnvVar` 会裁剪名称/值、拒绝空白值，并让 `ToString()` 只返回变量名；代理/URL 与完整解析语义见[使用指南](https://github.com/Cyanflower/Lunarium.Common/blob/main/docs/README.md)。
 
-- `Name` / `Value` 在构造时即裁剪首尾空白；`Set` 也按裁剪后的名称与值写入。
-- **"未设置"与"值为空白"无法区分**：两者都当作未设置（`Get` 返回 `null`，`GetRequired` 抛异常）。
-- `Set` 与构造函数**拒绝空白值**，因此写不出空字符串变量；要清空变量只能用 `Unset`（彻底删除）。
-- `ToString()` 只返回变量名、**不返回值**，避免日志或异常信息泄露密钥（取值请用 `Value`）；
-  同时刻意**不提供** `implicit operator string`——否则 `"" + envVar` 这类写法会绕过脱敏取得值。
-- `As<bool>()` / `RequiredAs<bool>()` 使用宽松字面量（`true/false`、`1/yes/on`、`0/no/off`，大小写不敏感），
-  而 `IParsable<bool>` 本身只认 `true/false`；需要自定义字面量时用 `AsBoolean("enabled", "disabled")`。
-- 枚举不实现 `IParsable<T>`，请用 `AsEnum` / `RequiredAsEnum`；后者默认 `requireDefined: true`，
-  会拒绝 `"99"` 这类能解析但未定义的纯数字值。
-
-代理可直接从环境变量构造（默认依次读取 `http_proxy` → `HTTP_PROXY`，小写优先，值同样会裁剪）：
+### ID
 
 ```csharp
-ProxyUrl? proxy = ProxyUrl.FromEnvironment();   // 也可指定变量名：FromEnvironment("MY_PROXY")
-IWebProxy webProxy = proxy.ToWebProxy();
-Uri uri = proxy.ToUri();
+using Lunarium.Common.UID;
+
+string requestId = NanoId.Generate();
+long eventId = LocalSnowflake.NextId();
+DateTimeOffset createdAt = LocalSnowflake.ExtractTime(eventId);
 ```
 
-非代理场景的环境 URL 用 `EnvUrl`（语义更明确；没有默认变量名，也不提供 `ToWebProxy`）：
+`NanoId` 适合随机 ID；`LocalSnowflake` 是单机雪花 ID，没有 node id，不能直接用于多进程/多机器全局唯一。
+
+### 缓存
 
 ```csharp
-EnvUrl? baseUrl = EnvUrl.FromEnvironment("API_BASE_URL");
-Uri uri = baseUrl.ToUri();
+using Lunarium.Common.Caching;
+
+await using var cache = new CacheStore("bot-state", storageDirectory: "/var/lib/lunarium");
+cache.Set("restart-count", 3);
+int count = cache.Get("restart-count", 0);
+await cache.FlushAsync();
 ```
 
-### 缓存落盘位置
+`CacheStore` 用于标量 KV + 5 秒防抖落盘；需要持久化单个强类型文档时用 `JsonDocumentStore<T>`（要求调用方提供源生成的 `JsonTypeInfo<T>`）。落盘路径、损坏重建、快照语义与选型见[使用指南](https://github.com/Cyanflower/Lunarium.Common/blob/main/docs/README.md)。
 
-`CacheStore` 默认把数据写在 `{AppContext.BaseDirectory}/CacheStore/{cacheNamespace}.json`。
-容器（需挂卷）、systemd 只读 root、安装在 `/usr/lib` 等不可写目录的场景，请显式指定可写目录：
-
-```csharp
-// 默认：AppContext.BaseDirectory/CacheStore/{ns}.json
-var store = new CacheStore("bot-state");
-
-// 显式目录 → 直接落在 {dir}/{ns}.json（不会再追加 CacheStore 子目录）
-var store = new CacheStore("bot-state", storageDirectory: "/var/lib/lunarium");
-
-// 相对路径以 AppContext.BaseDirectory 为基准解析，不依赖进程当前目录
-var other = new CacheStore("other", storageDirectory: "data");
-```
-
-`CacheStore.DataDirectoryName`（internal）只作为缺省目录名；进程内以解析后的**完整文件路径**去重，
-同名命名空间落在不同目录下互不影响。测试通过向构造函数注入临时目录保证隔离，**不要在测试里复刻路径约定**。
-
-### 单文档存储（`JsonDocumentStore<T>`）
-
-当要持久化的是「一个完整的强类型文档」（配置、状态等）而不是键值对时，使用 `JsonDocumentStore<T>`：
-
-```csharp
-// 消费方提供源生成的类型信息（AOT/裁剪安全）；缩进、编码器、注释处理等选项也由该上下文决定
-[JsonSourceGenerationOptions(WriteIndented = true)]
-[JsonSerializable(typeof(TicketConfig))]
-internal partial class TicketConfigJsonContext : JsonSerializerContext;
-
-await using var store = new JsonDocumentStore<TicketConfig>(
-    "ticket-config",
-    TicketConfigJsonContext.Default.TicketConfig,
-    storageDirectory: "/var/lib/lunarium");
-
-TicketConfig config = store.Read();                // 深拷贝快照，可直接使用/修改
-store.Set(config);                                 // 保存快照并触发 5 秒防抖落盘
-store.Update(c => { c.TicketCd = 2; return c; });  // 锁内原子更新
-await store.FlushAsync();                          // 立即落盘（DisposeAsync 也会自动刷盘）
-```
-
-语义与约定：
-
-- **快照语义**：`Read` / `Set` / `Update` 都通过 JSON 往返做深拷贝，调用方持有的实例与存储内部状态互不影响；
-  因此 `[JsonIgnore]` 成员不参与快照与落盘（本存储以 JSON 中的内容为准）。
-- **不做业务校验**：校验是调用方策略（加载后校验、更新前校验）。不要放在保存阶段——防抖落盘是后台任务，
-  失败只能进 `logError`，调用方无法同步感知。
-- **落盘位置**：`{storageDirectory ?? AppContext.BaseDirectory/JsonDocumentStore}/{documentName}.json`；
-  与 `CacheStore` 共享进程级路径注册表，同一个文件不允许被任一存储类型的两个实例同时占用。
-- **损坏处理**：与 `CacheStore` 一致（`CacheFileCorruptException`；`allowCorruptRebuild` 必须同时提供 `logError`）。
-- **AOT**：只使用 `JsonSerializer` 的 `JsonTypeInfo<T>` 重载，调用方必须传入源生成上下文产出的类型信息。
-
-## 常用命令
+## 构建与测试
 
 ```bash
-# 在仓库根目录执行（根目录的 .slnx 会定位到 src 下的项目）
+# 在仓库根目录执行（根目录的 .slnx 会定位到 src、tests 与 docs/examples）
 
 # 还原依赖
 dotnet restore
 
-# 生成（产物位于 src/Lunarium.Common/bin/ 下）
+# 生成（同时编译类库、测试与文档示例）
 dotnet build
 
-# 只构建单个项目
+# 运行测试（测试项目目标框架为 net10.0）
+dotnet test -c Release
+
+# 只构建类库
 dotnet build src/Lunarium.Common/Lunarium.Common.csproj
 
-# 打包(同时产出 .nupkg 与 .snupkg 符号包)
-dotnet pack -c Release
+# 运行文档示例
+dotnet run --project docs/examples/Lunarium.Common.Examples.csproj -- all
+
+# 打包（同时产出 .nupkg 与 .snupkg 符号包）
+dotnet pack src/Lunarium.Common/Lunarium.Common.csproj -c Release
 ```
 
 ## AOT / 裁剪兼容
+
+完整的 AOT / 裁剪说明见[使用指南的 AOT 一节](https://github.com/Cyanflower/Lunarium.Common/blob/main/docs/README.md#aot)；下面保留发布与维护时最关键的约束。
 
 本库已开启 `<IsAotCompatible>true</IsAotCompatible>`，可以安全用于 **Native AOT**（`PublishAot`）
 与 **trimming**（`PublishTrimmed`）应用。
 
 已实测：以 `PublishAot=true` 发布（`dotnet publish -c Release -r linux-x64`）得到原生可执行文件并可正常运行，
-`Cache` / `CacheStore` 的序列化与落盘重载、`NanoID`、`LocalSnowflake`、`DirtyDebouncer` / `CtsDebouncer` 均无异常。
+`Cache` / `CacheStore` 的序列化与落盘重载、`NanoId`、`LocalSnowflake`、`DirtyDebouncer` / `CtsDebouncer` 均无异常。
 
 ### 新增需要 JSON 序列化的类型时必须同步登记
 
@@ -177,7 +139,7 @@ internal partial class CacheJsonContext : JsonSerializerContext;
 ```
 
 > `JsonDocumentStore<T>` 不在此列：文档根类型位于消费方程序集，由调用方自己的 `JsonSerializerContext` 提供
-> `JsonTypeInfo<T>`（见上文示例），库内不需要也无法登记。
+> `JsonTypeInfo<T>`（见[使用指南](https://github.com/Cyanflower/Lunarium.Common/blob/main/docs/README.md)），库内不需要也无法登记。
 
 忘记登记属于「编译期无感、运行时炸」的静默失败：库本身编译通过、无任何告警，
 但 AOT / 裁剪后的应用会抛
@@ -246,10 +208,11 @@ private static readonly CacheJsonContext JsonContext = new(JsonOptions);
   简单名查找会自内向外逐层查找命名空间成员，在 `Lunarium.Common` 这层先撞上同名命名空间后
   就不再继续看 `using` 导入的同名类型了。该模块命名空间因此改为 `Lunarium.Common.Caching`。
 - 改动涉及 JSON 序列化时，先读上面的「AOT / 裁剪兼容」一节。
-- 涉及落盘路径时，先读「缓存落盘位置」一节：路径约定只在库内维护一处，测试一律注入临时目录。
+- 涉及落盘路径时，先读[使用指南的「文件路径与多实例」](https://github.com/Cyanflower/Lunarium.Common/blob/main/docs/README.md#paths)：路径约定只在库内维护一处，测试一律注入临时目录。
+- 修改公开 API 时同步更新 `docs/api/`；修改文档示例后运行 `dotnet run --project docs/examples/Lunarium.Common.Examples.csproj -- all`。
 
 ## 许可证
 
-本项目基于 [Apache License 2.0](LICENSE) 授权，Copyright © 2026 Cyanflower。
+本项目基于 [Apache License 2.0](https://github.com/Cyanflower/Lunarium.Common/blob/main/LICENSE) 授权，Copyright © 2026 Cyanflower。
 
 在遵守许可条款的前提下，可用于商业与非商业项目；再分发时请保留 `LICENSE` 与本文件的版权声明。
